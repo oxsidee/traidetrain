@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { useCurrency } from '../CurrencyContext';
+import { StockLink } from '../components/StockModal';
 
 export default function Dashboard({ user, onUpdate }) {
   const [amount, setAmount] = useState('');
@@ -101,7 +102,7 @@ export default function Dashboard({ user, onUpdate }) {
             <tbody>
               {user.portfolio.map((p) => (
                 <tr key={p.symbol}>
-                  <td className="stock-symbol">{p.symbol}</td>
+                  <td><StockLink symbol={p.symbol} user={user} onUpdate={onUpdate}>{p.symbol}</StockLink></td>
                   <td>{p.quantity}</td>
                   <td>{format(p.avg_price)}</td>
                   <td>{format(p.avg_price * p.quantity)}</td>

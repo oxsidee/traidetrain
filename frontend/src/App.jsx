@@ -97,7 +97,7 @@ function AppContent() {
         <Routes>
           <Route path="/" element={<Dashboard user={user} onUpdate={fetchUser} />} />
           <Route path="/trading" element={<Trading user={user} onUpdate={fetchUser} />} />
-          <Route path="/reports" element={<Reports />} />
+          <Route path="/reports" element={<Reports user={user} onUpdate={fetchUser} />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>
