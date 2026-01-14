@@ -9,11 +9,11 @@ import requests
 import time
 
 from database import engine, get_db, Base
-from models import User, Portfolio, Transaction
+from models import User, Portfolio, Transaction, Favorite
 
 Base.metadata.create_all(bind=engine)
 
-DEFAULT_STOCKS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA", "NFLX", "SBER.ME", "GAZP.ME", "LKOH.ME"]
+DEFAULT_STOCKS = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "META", "NVDA", "NFLX", "SBER.ME", "GAZP.ME", "LKOH.ME", "YDEX.ME"]
 
 # Currency pairs for conversion (base is USD)
 CURRENCY_PAIRS = {
@@ -273,6 +273,7 @@ SECRET_KEY = "your-secret-key-change-in-production"
 class UserCreate(BaseModel):
     username: str
     password: str
+    display_name: str = None
 
 class DepositRequest(BaseModel):
     amount: float
@@ -294,7 +295,8 @@ def get_current_user(token: str, db: Session):
 def register(data: UserCreate, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == data.username).first():
         raise HTTPException(400, "Username exists")
-    user = User(username=data.username, password_hash=pwd_context.hash(data.password))
+    display = data.display_name if data.display_name else data.username
+    user = User(username=data.username, display_name=display, password_hash=pwd_context.hash(data.password))
     db.add(user)
     db.commit()
     return {"message": "Registered"}
@@ -305,7 +307,7 @@ def login(data: UserCreate, db: Session = Depends(get_db)):
     if not user or not pwd_context.verify(data.password, user.password_hash):
         raise HTTPException(401, "Invalid credentials")
     token = jwt.encode({"sub": user.username, "exp": datetime.utcnow() + timedelta(days=7)}, SECRET_KEY)
-    return {"token": token, "username": user.username}
+    return {"token": token, "username": user.username, "display_name": user.display_name or user.username}
 
 @app.get("/api/me")
 def get_me(token: str, db: Session = Depends(get_db)):
@@ -313,6 +315,7 @@ def get_me(token: str, db: Session = Depends(get_db)):
     portfolio = db.query(Portfolio).filter(Portfolio.user_id == user.id).all()
     return {
         "username": user.username,
+        "display_name": user.display_name or user.username,
         "balance": user.balance,
         "portfolio": [{"symbol": p.symbol, "quantity": p.quantity, "avg_price": p.avg_price} for p in portfolio]
     }
@@ -324,14 +327,167 @@ def deposit(data: DepositRequest, token: str, db: Session = Depends(get_db)):
     db.commit()
     return {"balance": user.balance}
 
+# Account settings
+class UpdateUsernameRequest(BaseModel):
+    new_username: str
+
+class UpdatePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@app.put("/api/account/username")
+def update_username(data: UpdateUsernameRequest, token: str, db: Session = Depends(get_db)):
+    user = get_current_user(token, db)
+    
+    if len(data.new_username) < 3:
+        raise HTTPException(400, "Логин должен быть не менее 3 символов")
+    
+    existing = db.query(User).filter(User.username == data.new_username).first()
+    if existing and existing.id != user.id:
+        raise HTTPException(400, "Этот логин уже занят")
+    
+    user.username = data.new_username
+    db.commit()
+    
+    # Generate new token with new username
+    new_token = jwt.encode({"sub": user.username}, SECRET_KEY, algorithm="HS256")
+    return {"message": "Логин изменён", "username": user.username, "token": new_token}
+
+@app.put("/api/account/password")
+def update_password(data: UpdatePasswordRequest, token: str, db: Session = Depends(get_db)):
+    user = get_current_user(token, db)
+    
+    if not pwd_ctx.verify(data.current_password, user.password_hash):
+        raise HTTPException(400, "Неверный текущий пароль")
+    
+    if len(data.new_password) < 4:
+        raise HTTPException(400, "Пароль должен быть не менее 4 символов")
+    
+    user.password_hash = pwd_ctx.hash(data.new_password)
+    db.commit()
+    return {"message": "Пароль изменён"}
+
+class UpdateDisplayNameRequest(BaseModel):
+    display_name: str
+
+@app.put("/api/account/display_name")
+def update_display_name(data: UpdateDisplayNameRequest, token: str, db: Session = Depends(get_db)):
+    user = get_current_user(token, db)
+    
+    if len(data.display_name) < 2:
+        raise HTTPException(400, "Имя должно быть не менее 2 символов")
+    
+    user.display_name = data.display_name
+    db.commit()
+    return {"message": "Имя изменено", "display_name": user.display_name}
+
+# Cache for screener data (Yahoo doesn't support offset, so we fetch all and paginate locally)
+_screener_cache = {}
+_screener_cache_time = {}
+SCREENER_CACHE_TTL = 60  # 1 minute cache
+
+def fetch_yahoo_screener(screener_type: str, limit: int = 15, offset: int = 0):
+    """Fetch stocks from Yahoo Finance screener API with local pagination"""
+    global _screener_cache, _screener_cache_time
+    
+    now = time.time()
+    
+    # Check cache first
+    if screener_type in _screener_cache and (now - _screener_cache_time.get(screener_type, 0)) < SCREENER_CACHE_TTL:
+        all_stocks = _screener_cache[screener_type]
+        paginated = all_stocks[offset:offset+limit]
+        has_more = (offset + limit) < len(all_stocks)
+        return paginated, has_more
+    
+    # Yahoo screener IDs
+    screeners = {
+        "gainers": "day_gainers",
+        "losers": "day_losers", 
+        "active": "most_actives",
+        "trending": "trending"
+    }
+    
+    screener_id = screeners.get(screener_type, "day_gainers")
+    all_stocks = []
+    
+    # Try trending endpoint first
+    if screener_type == "trending":
+        try:
+            url = "https://query1.finance.yahoo.com/v1/finance/trending/US"
+            resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
+            data = resp.json()
+            quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
+            symbols = [q.get("symbol") for q in quotes if q.get("symbol")]
+            
+            for symbol in symbols[:50]:  # Limit to 50 for performance
+                try:
+                    quote = yahoo_quote(symbol)
+                    quote["displaySymbol"] = normalize_symbol(quote["symbol"], for_display=True)
+                    quote["category"] = "trending"
+                    all_stocks.append(quote)
+                except:
+                    pass
+                time.sleep(0.05)
+        except Exception as e:
+            print(f"Trending fetch error: {e}")
+    else:
+        # Use screener API for gainers/losers/active - fetch 100 at once
+        try:
+            url = f"https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&lang=en-US&region=US&scrIds={screener_id}&count=100"
+            resp = requests.get(url, headers=YAHOO_HEADERS, timeout=10)
+            data = resp.json()
+            
+            result = data.get("finance", {}).get("result", [{}])[0]
+            quotes = result.get("quotes", [])
+            
+            for q in quotes:
+                try:
+                    stock = {
+                        "symbol": q.get("symbol"),
+                        "displaySymbol": q.get("symbol"),
+                        "name": q.get("shortName") or q.get("longName") or q.get("symbol"),
+                        "price": q.get("regularMarketPrice"),
+                        "change": q.get("regularMarketChangePercent"),
+                        "volume": q.get("regularMarketVolume"),
+                        "exchange": q.get("exchange", ""),
+                        "currency": q.get("currency", "USD"),
+                        "market_state": q.get("marketState", "REGULAR"),
+                        "category": screener_type
+                    }
+                    all_stocks.append(stock)
+                except:
+                    pass
+        except Exception as e:
+            print(f"Screener fetch error for {screener_type}: {e}")
+    
+    # Cache the results
+    _screener_cache[screener_type] = all_stocks
+    _screener_cache_time[screener_type] = now
+    
+    # Return paginated results
+    paginated = all_stocks[offset:offset+limit]
+    has_more = (offset + limit) < len(all_stocks)
+    return paginated, has_more
+
 @app.get("/api/stocks")
-def get_stocks():
-    """Fetch default stocks from appropriate exchange APIs"""
+def get_stocks(category: str = "default", limit: int = 15, offset: int = 0):
+    """Fetch stocks from appropriate source based on category with pagination"""
+    
+    # Handle special categories with pagination
+    if category in ["gainers", "losers", "active", "trending"]:
+        stocks, has_more = fetch_yahoo_screener(category, limit, offset)
+        if stocks:
+            return {"stocks": stocks, "has_more": has_more, "offset": offset + len(stocks)}
+        return {"stocks": [], "has_more": False, "offset": offset}
+    
+    # Default: fetch static stock list (no pagination needed for small list)
     stocks = []
-    for symbol in DEFAULT_STOCKS:
+    stock_list = DEFAULT_STOCKS[offset:offset+limit]
+    for symbol in stock_list:
         try:
             quote = get_quote_universal(symbol)
             quote["displaySymbol"] = normalize_symbol(quote["symbol"], for_display=True)
+            quote["category"] = "default"
             stocks.append(quote)
         except Exception as e:
             print(f"Error fetching {symbol}: {e}")
@@ -342,10 +498,12 @@ def get_stocks():
                 "price": None,
                 "change": None,
                 "exchange": "MOEX" if is_moex_symbol(symbol) else "US",
+                "category": "default",
                 "error": str(e)
             })
         time.sleep(0.1)
-    return stocks
+    has_more = (offset + limit) < len(DEFAULT_STOCKS)
+    return {"stocks": stocks, "has_more": has_more, "offset": offset + len(stocks)}
 
 @app.get("/api/stock/{symbol}")
 def get_stock(symbol: str):
@@ -829,6 +987,115 @@ def get_transactions(token: str, db: Session = Depends(get_db)):
     user = get_current_user(token, db)
     txs = db.query(Transaction).filter(Transaction.user_id == user.id).order_by(Transaction.created_at.desc()).all()
     return [{"symbol": t.symbol, "displaySymbol": normalize_symbol(t.symbol, for_display=True), "action": t.action, "quantity": t.quantity, "price": t.price, "total": t.total, "date": str(t.created_at)} for t in txs]
+
+# Favorites API
+@app.get("/api/favorites")
+def get_favorites(token: str, db: Session = Depends(get_db)):
+    """Get user's favorite stocks"""
+    user = get_current_user(token, db)
+    favs = db.query(Favorite).filter(Favorite.user_id == user.id).all()
+    return [f.symbol for f in favs]
+
+@app.get("/api/favorites/stocks")
+def get_favorite_stocks(token: str, limit: int = 15, offset: int = 0, db: Session = Depends(get_db)):
+    """Get user's favorite stocks with full data"""
+    user = get_current_user(token, db)
+    favs = db.query(Favorite).filter(Favorite.user_id == user.id).all()
+    symbols = [f.symbol for f in favs]
+    
+    if not symbols:
+        return {"stocks": [], "has_more": False, "offset": 0}
+    
+    stocks = []
+    paginated_symbols = symbols[offset:offset+limit]
+    for symbol in paginated_symbols:
+        try:
+            quote = get_quote_universal(symbol)
+            quote["displaySymbol"] = normalize_symbol(quote["symbol"], for_display=True)
+            quote["category"] = "favorites"
+            quote["isFavorite"] = True
+            stocks.append(quote)
+        except Exception as e:
+            print(f"Error fetching favorite {symbol}: {e}")
+            stocks.append({
+                "symbol": symbol,
+                "displaySymbol": normalize_symbol(symbol, for_display=True),
+                "name": symbol,
+                "price": None,
+                "change": None,
+                "exchange": "MOEX" if is_moex_symbol(symbol) else "US",
+                "category": "favorites",
+                "isFavorite": True,
+                "error": str(e)
+            })
+        time.sleep(0.05)
+    
+    has_more = (offset + limit) < len(symbols)
+    return {"stocks": stocks, "has_more": has_more, "offset": offset + len(stocks)}
+
+class FavoriteRequest(BaseModel):
+    symbol: str
+
+@app.post("/api/favorites")
+def add_favorite(req: FavoriteRequest, token: str, db: Session = Depends(get_db)):
+    """Add stock to favorites"""
+    user = get_current_user(token, db)
+    symbol = normalize_symbol(req.symbol)
+    
+    # Check if already in favorites
+    existing = db.query(Favorite).filter(Favorite.user_id == user.id, Favorite.symbol == symbol).first()
+    if existing:
+        return {"message": "Already in favorites", "symbol": symbol}
+    
+    fav = Favorite(user_id=user.id, symbol=symbol)
+    db.add(fav)
+    db.commit()
+    return {"message": "Added to favorites", "symbol": symbol}
+
+@app.delete("/api/favorites/{symbol}")
+def remove_favorite(symbol: str, token: str, db: Session = Depends(get_db)):
+    """Remove stock from favorites"""
+    user = get_current_user(token, db)
+    normalized = normalize_symbol(symbol)
+    
+    fav = db.query(Favorite).filter(Favorite.user_id == user.id, Favorite.symbol == normalized).first()
+    if not fav:
+        raise HTTPException(404, "Not in favorites")
+    
+    db.delete(fav)
+    db.commit()
+    return {"message": "Removed from favorites", "symbol": normalized}
+
+@app.get("/api/indices")
+def get_market_indices():
+    """Get major market indices"""
+    indices = [
+        {"symbol": "^GSPC", "name": "S&P 500"},
+        {"symbol": "^DJI", "name": "Dow Jones"},
+        {"symbol": "^IXIC", "name": "NASDAQ"},
+        {"symbol": "IMOEX.ME", "name": "MOEX"},
+    ]
+    
+    results = []
+    for idx in indices:
+        try:
+            quote = yahoo_quote(idx["symbol"])
+            results.append({
+                "symbol": idx["symbol"],
+                "name": idx["name"],
+                "price": quote.get("price"),
+                "change": quote.get("change"),
+            })
+        except:
+            results.append({
+                "symbol": idx["symbol"],
+                "name": idx["name"],
+                "price": None,
+                "change": None,
+            })
+        time.sleep(0.05)
+    
+    return results
 
 @app.get("/api/report")
 def get_report(token: str, db: Session = Depends(get_db)):

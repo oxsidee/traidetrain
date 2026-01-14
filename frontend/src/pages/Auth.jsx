@@ -4,6 +4,7 @@ import { api } from '../api';
 export default function Auth({ onLogin }) {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
@@ -15,7 +16,11 @@ export default function Auth({ onLogin }) {
         const { data } = await api.login({ username, password });
         onLogin(data.token, data.username);
       } else {
-        await api.register({ username, password });
+        if (!displayName.trim()) {
+          setError('Введите ваше имя');
+          return;
+        }
+        await api.register({ username, password, display_name: displayName });
         const { data } = await api.login({ username, password });
         onLogin(data.token, data.username);
       }
@@ -52,6 +57,15 @@ export default function Auth({ onLogin }) {
         </div>
 
         <form onSubmit={handleSubmit}>
+          {!isLogin && (
+            <input
+              type="text"
+              placeholder="Ваше имя"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="mb-4"
+            />
+          )}
           <input
             type="text"
             placeholder="Логин"

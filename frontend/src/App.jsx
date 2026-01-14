@@ -43,7 +43,7 @@ function MarketIndicator() {
     };
     
     fetchMarkets();
-    const interval = setInterval(fetchMarkets, 10000); // Update every 10 seconds
+    const interval = setInterval(fetchMarkets, 10000);
     return () => clearInterval(interval);
   }, []);
   
@@ -133,7 +133,234 @@ function MarketIndicator() {
   );
 }
 
-function Nav({ user, onLogout }) {
+function SettingsModal({ user, onClose, onUpdate }) {
+  const [activeTab, setActiveTab] = useState('display');
+  const [newDisplayName, setNewDisplayName] = useState(user.display_name || user.username);
+  const [newUsername, setNewUsername] = useState(user.username);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  const handleUpdateDisplayName = async (e) => {
+    e.preventDefault();
+    if (newDisplayName.length < 2) {
+      setMessage({ type: 'error', text: 'Имя должно быть не менее 2 символов' });
+      return;
+    }
+    
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      await api.updateDisplayName(newDisplayName);
+      setMessage({ type: 'success', text: 'Имя успешно изменено!' });
+      onUpdate();
+    } catch (err) {
+      setMessage({ type: 'error', text: err.response?.data?.detail || 'Ошибка' });
+    }
+    setLoading(false);
+  };
+
+  const handleUpdateUsername = async (e) => {
+    e.preventDefault();
+    if (newUsername === user.username) {
+      setMessage({ type: 'error', text: 'Логин не изменился' });
+      return;
+    }
+    if (newUsername.length < 3) {
+      setMessage({ type: 'error', text: 'Логин должен быть не менее 3 символов' });
+      return;
+    }
+    
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      const { data } = await api.updateUsername(newUsername);
+      localStorage.setItem('token', data.token);
+      setMessage({ type: 'success', text: 'Логин успешно изменён!' });
+      onUpdate();
+    } catch (err) {
+      setMessage({ type: 'error', text: err.response?.data?.detail || 'Ошибка' });
+    }
+    setLoading(false);
+  };
+
+  const handleUpdatePassword = async (e) => {
+    e.preventDefault();
+    if (!currentPassword) {
+      setMessage({ type: 'error', text: 'Введите текущий пароль' });
+      return;
+    }
+    if (newPassword.length < 4) {
+      setMessage({ type: 'error', text: 'Новый пароль должен быть не менее 4 символов' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setMessage({ type: 'error', text: 'Пароли не совпадают' });
+      return;
+    }
+    
+    setLoading(true);
+    setMessage({ type: '', text: '' });
+    try {
+      await api.updatePassword(currentPassword, newPassword);
+      setMessage({ type: 'success', text: 'Пароль успешно изменён!' });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setMessage({ type: 'error', text: err.response?.data?.detail || 'Ошибка' });
+    }
+    setLoading(false);
+  };
+
+  const TabButton = ({ id, label }) => (
+    <button
+      onClick={() => { setActiveTab(id); setMessage({ type: '', text: '' }); }}
+      style={{
+        flex: 1,
+        padding: '10px 8px',
+        background: activeTab === id ? 'var(--accent)' : 'var(--bg-dark)',
+        color: activeTab === id ? 'var(--bg-dark)' : 'var(--text)',
+        border: 'none',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontWeight: activeTab === id ? '600' : '400',
+        fontSize: '13px',
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h2 style={{ margin: 0 }}>⚙️ Настройки аккаунта</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer', color: 'var(--text-dim)' }}>×</button>
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '20px' }}>
+          <TabButton id="display" label="Имя" />
+          <TabButton id="username" label="Логин" />
+          <TabButton id="password" label="Пароль" />
+        </div>
+
+        {/* Message */}
+        {message.text && (
+          <div style={{
+            padding: '12px',
+            borderRadius: '8px',
+            marginBottom: '16px',
+            background: message.type === 'success' ? 'rgba(0, 212, 170, 0.15)' : 'rgba(255, 71, 87, 0.15)',
+            color: message.type === 'success' ? 'var(--green)' : 'var(--red)',
+            border: `1px solid ${message.type === 'success' ? 'var(--green)' : 'var(--red)'}`,
+          }}>
+            {message.text}
+          </div>
+        )}
+
+        {/* Display Name Form */}
+        {activeTab === 'display' && (
+          <form onSubmit={handleUpdateDisplayName}>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-dim)', fontSize: '13px' }}>
+                Отображаемое имя
+              </label>
+              <input
+                type="text"
+                value={newDisplayName}
+                onChange={(e) => setNewDisplayName(e.target.value)}
+                placeholder="Введите ваше имя"
+                style={{ width: '100%' }}
+              />
+              <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '6px' }}>
+                Это имя будет отображаться в интерфейсе
+              </p>
+            </div>
+            <button type="submit" className="btn" disabled={loading} style={{ width: '100%' }}>
+              {loading ? 'Сохранение...' : 'Сохранить имя'}
+            </button>
+          </form>
+        )}
+
+        {/* Username Form */}
+        {activeTab === 'username' && (
+          <form onSubmit={handleUpdateUsername}>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-dim)', fontSize: '13px' }}>
+                Логин для входа
+              </label>
+              <input
+                type="text"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                placeholder="Введите новый логин"
+                style={{ width: '100%' }}
+              />
+              <p style={{ fontSize: '12px', color: 'var(--text-dim)', marginTop: '6px' }}>
+                Используется для авторизации
+              </p>
+            </div>
+            <button type="submit" className="btn" disabled={loading} style={{ width: '100%' }}>
+              {loading ? 'Сохранение...' : 'Сохранить логин'}
+            </button>
+          </form>
+        )}
+
+        {/* Password Form */}
+        {activeTab === 'password' && (
+          <form onSubmit={handleUpdatePassword}>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-dim)', fontSize: '13px' }}>
+                Текущий пароль
+              </label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Введите текущий пароль"
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-dim)', fontSize: '13px' }}>
+                Новый пароль
+              </label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Введите новый пароль"
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: 'var(--text-dim)', fontSize: '13px' }}>
+                Подтвердите пароль
+              </label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Повторите новый пароль"
+                style={{ width: '100%' }}
+              />
+            </div>
+            <button type="submit" className="btn" disabled={loading} style={{ width: '100%' }}>
+              {loading ? 'Сохранение...' : 'Сохранить пароль'}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Nav({ user, onLogout, onOpenSettings }) {
   const location = useLocation();
   
   return (
@@ -150,7 +377,26 @@ function Nav({ user, onLogout }) {
         <div className="flex gap-4" style={{ alignItems: 'center' }}>
           <MarketIndicator />
           <CurrencySelector />
-          <span style={{ color: 'var(--text-dim)' }}>{user?.username}</span>
+          <button
+            onClick={onOpenSettings}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-dim)',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 10px',
+              borderRadius: '6px',
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+          >
+            <span>⚙️</span>
+            {user?.display_name || user?.username}
+          </button>
           <button className="btn btn-outline" onClick={onLogout}>Выйти</button>
         </div>
       </div>
@@ -161,6 +407,7 @@ function Nav({ user, onLogout }) {
 function AppContent() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
 
   const fetchUser = async () => {
     if (getToken()) {
@@ -196,7 +443,7 @@ function AppContent() {
 
   return (
     <BrowserRouter>
-      <Nav user={user} onLogout={handleLogout} />
+      <Nav user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} />
       <div className="container">
         <Routes>
           <Route path="/" element={<Dashboard user={user} onUpdate={fetchUser} />} />
@@ -205,6 +452,14 @@ function AppContent() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>
+      
+      {showSettings && (
+        <SettingsModal 
+          user={user} 
+          onClose={() => setShowSettings(false)} 
+          onUpdate={fetchUser} 
+        />
+      )}
     </BrowserRouter>
   );
 }

@@ -8,12 +8,14 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    display_name = Column(String, nullable=True)
     password_hash = Column(String)
     balance = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     portfolio = relationship("Portfolio", back_populates="user")
     transactions = relationship("Transaction", back_populates="user")
+    favorites = relationship("Favorite", back_populates="user")
 
 class Portfolio(Base):
     __tablename__ = "portfolio"
@@ -39,3 +41,13 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     user = relationship("User", back_populates="transactions")
+
+class Favorite(Base):
+    __tablename__ = "favorites"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    symbol = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User", back_populates="favorites")

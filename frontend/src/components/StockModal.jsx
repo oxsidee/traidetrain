@@ -401,7 +401,7 @@ function StockChart({ data, chartType }) {
   return <LineChartComponent data={data} animate={isFirstRender} />;
 }
 
-export default function StockModal({ symbol, onClose, user, onUpdate }) {
+export default function StockModal({ symbol, onClose, user, onUpdate, isFavorite: initialFavorite, onFavoriteToggle }) {
   const { symbol: currSymbol, convertFrom } = useCurrency();
   const [stockData, setStockData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -410,7 +410,34 @@ export default function StockModal({ symbol, onClose, user, onUpdate }) {
   const [chartLoading, setChartLoading] = useState(false);
   const [chartType, setChartType] = useState('line'); // 'line' or 'candle'
   const [quantity, setQuantity] = useState('1');
+  const [isFavorite, setIsFavorite] = useState(initialFavorite || false);
+  const [favLoading, setFavLoading] = useState(false);
   const isVisibleRef = useRef(true);
+  
+  // Sync favorite state from props
+  useEffect(() => {
+    setIsFavorite(initialFavorite || false);
+  }, [initialFavorite]);
+  
+  const handleFavoriteClick = async () => {
+    if (favLoading) return;
+    setFavLoading(true);
+    try {
+      if (isFavorite) {
+        await api.removeFavorite(symbol);
+      } else {
+        await api.addFavorite(symbol);
+      }
+      const newState = !isFavorite;
+      setIsFavorite(newState);
+      if (onFavoriteToggle) {
+        onFavoriteToggle(symbol, newState);
+      }
+    } catch (err) {
+      console.error('Favorite error:', err);
+    }
+    setFavLoading(false);
+  };
 
   // Disable body scroll when modal is open
   useEffect(() => {
@@ -516,14 +543,34 @@ export default function StockModal({ symbol, onClose, user, onUpdate }) {
         ) : (
           <>
             <div className="flex" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-              <div>
-                <div className="stock-symbol" style={{ fontSize: '1.5rem' }}>{stockData.displaySymbol || stockData.symbol}</div>
-                <div style={{ color: 'var(--text-dim)' }}>{stockData.name}</div>
-                {stockData.exchange && (
-                  <div style={{ color: 'var(--text-dim)', fontSize: '11px', marginTop: '4px' }}>
-                    {stockData.exchange} • {stockData.currency || 'USD'}
-                  </div>
-                )}
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                <button
+                  onClick={handleFavoriteClick}
+                  disabled={favLoading}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: favLoading ? 'wait' : 'pointer',
+                    padding: '0',
+                    opacity: favLoading ? 0.5 : 1,
+                    transition: 'transform 0.2s',
+                    transform: isFavorite ? 'scale(1.1)' : 'scale(1)',
+                  }}
+                  title={isFavorite ? 'Удалить из избранного' : 'Добавить в избранное'}
+                >
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill={isFavorite ? '#e3c77f' : 'none'} stroke="#e3c77f" strokeWidth="2">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                </button>
+                <div>
+                  <div className="stock-symbol" style={{ fontSize: '1.5rem' }}>{stockData.displaySymbol || stockData.symbol}</div>
+                  <div style={{ color: 'var(--text-dim)' }}>{stockData.name}</div>
+                  {stockData.exchange && (
+                    <div style={{ color: 'var(--text-dim)', fontSize: '11px', marginTop: '4px' }}>
+                      {stockData.exchange} • {stockData.currency || 'USD'}
+                    </div>
+                  )}
+                </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div className="stock-price">{currSymbol}{convertedPrice}</div>
@@ -632,7 +679,7 @@ export default function StockModal({ symbol, onClose, user, onUpdate }) {
 }
 
 // Clickable stock symbol component
-export function StockLink({ symbol, children, user, onUpdate }) {
+export function StockLink({ symbol, children, user, onUpdate, isFavorite, onFavoriteToggle }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -642,7 +689,16 @@ export function StockLink({ symbol, children, user, onUpdate }) {
       >
         {children || symbol}
       </span>
-      {open && <StockModal symbol={symbol} onClose={() => setOpen(false)} user={user} onUpdate={onUpdate} />}
+      {open && (
+        <StockModal 
+          symbol={symbol} 
+          onClose={() => setOpen(false)} 
+          user={user} 
+          onUpdate={onUpdate}
+          isFavorite={isFavorite}
+          onFavoriteToggle={onFavoriteToggle}
+        />
+      )}
     </>
   );
 }

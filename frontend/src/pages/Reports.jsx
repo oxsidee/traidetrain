@@ -132,16 +132,19 @@ export default function Reports({ user, onUpdate }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedSymbol, setSelectedSymbol] = useState(null);
+  const [favorites, setFavorites] = useState(new Set());
   const pricesRef = useRef({});
 
   const fetchInitialData = useCallback(async () => {
     try {
-      const [reportRes, txRes] = await Promise.all([
+      const [reportRes, txRes, favsRes] = await Promise.all([
         api.getReport(),
-        api.getTransactions()
+        api.getTransactions(),
+        api.getFavorites()
       ]);
       setReport(reportRes.data);
       setTransactions(txRes.data);
+      setFavorites(new Set(favsRes.data || []));
       
       reportRes.data.holdings.forEach(h => {
         pricesRef.current[h.symbol] = h.current_price;
@@ -153,6 +156,18 @@ export default function Reports({ user, onUpdate }) {
   useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
+  
+  const handleFavoriteToggle = useCallback((symbol, isFavorite) => {
+    setFavorites(prev => {
+      const newSet = new Set(prev);
+      if (isFavorite) {
+        newSet.add(symbol);
+      } else {
+        newSet.delete(symbol);
+      }
+      return newSet;
+    });
+  }, []);
 
   const handlePriceUpdate = useCallback((symbol, price) => {
     pricesRef.current[symbol] = price;
@@ -283,7 +298,9 @@ export default function Reports({ user, onUpdate }) {
           symbol={selectedSymbol} 
           onClose={closeModal} 
           user={user} 
-          onUpdate={onUpdate} 
+          onUpdate={onUpdate}
+          isFavorite={favorites.has(selectedSymbol)}
+          onFavoriteToggle={handleFavoriteToggle}
         />
       )}
     </div>
