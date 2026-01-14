@@ -40,7 +40,7 @@ function Skeleton({ width = '100%', height = '20px' }) {
 }
 
 export default function Trading({ user, onUpdate }) {
-  const { format, symbol, convert } = useCurrency();
+  const { format, symbol, convert, formatNative, getSymbol, convertFrom, formatConverted } = useCurrency();
   const [stocks, setStocks] = useState([]);
   const [prevPrices, setPrevPrices] = useState({});
   const [selected, setSelected] = useState(null);
@@ -56,8 +56,32 @@ export default function Trading({ user, onUpdate }) {
   const [chartPeriod, setChartPeriod] = useState('1mo');
   const [chartHistory, setChartHistory] = useState([]);
   const [chartLoading, setChartLoading] = useState(false);
+  const [openExchanges, setOpenExchanges] = useState(new Set());
   const intervalRef = useRef(null);
   const isVisibleRef = useRef(true);
+
+  // Check which exchanges are open
+  const fetchMarketStatus = useCallback(async () => {
+    try {
+      const { data } = await api.getMarkets();
+      const open = new Set(data.exchanges.filter(e => e.is_open).map(e => e.id));
+      setOpenExchanges(open);
+    } catch {}
+  }, []);
+
+  // Helper to check if stock's exchange is open
+  const isExchangeOpen = useCallback((stock) => {
+    const exchange = stock.exchange || '';
+    if (exchange === 'MOEX' || stock.symbol?.includes('.ME')) return openExchanges.has('MOEX');
+    if (exchange.includes('NASDAQ') || exchange === 'NMS') return openExchanges.has('NASDAQ');
+    if (exchange.includes('NYSE') || exchange === 'NYQ') return openExchanges.has('NYSE');
+    if (exchange.includes('LSE') || exchange === 'LSE') return openExchanges.has('LSE');
+    if (exchange.includes('XETRA') || exchange === 'GER') return openExchanges.has('XETRA');
+    if (exchange.includes('HK') || exchange === 'HKG') return openExchanges.has('HKEX');
+    if (exchange.includes('TSE') || exchange === 'JPX') return openExchanges.has('TSE');
+    // Default: update if any US exchange is open
+    return openExchanges.has('NASDAQ') || openExchanges.has('NYSE');
+  }, [openExchanges]);
 
   const fetchStocks = useCallback(async () => {
     if (!isVisibleRef.current) return;
@@ -78,20 +102,60 @@ export default function Trading({ user, onUpdate }) {
     setLoading(false);
   }, []);
 
+  // Refresh only stocks from open exchanges
+  const refreshOpenStocks = useCallback(async () => {
+    if (!isVisibleRef.current || stocks.length === 0) return;
+    
+    // Get symbols of stocks from open exchanges
+    const symbolsToUpdate = stocks.filter(s => isExchangeOpen(s)).map(s => s.symbol);
+    if (symbolsToUpdate.length === 0) return;
+    
+    // Update each stock individually
+    for (const sym of symbolsToUpdate) {
+      try {
+        const { data } = await api.getQuote(sym);
+        setStocks(prev => prev.map(s => 
+          s.symbol === sym ? { ...s, price: data.price, change: data.change } : s
+        ));
+        setPrevPrices(prev => ({ ...prev, [sym]: stocks.find(s => s.symbol === sym)?.price }));
+      } catch {}
+    }
+    setLastUpdate(new Date());
+  }, [stocks, isExchangeOpen]);
+
   useEffect(() => {
     const handleVisibility = () => {
       isVisibleRef.current = document.visibilityState === 'visible';
-      if (isVisibleRef.current) fetchStocks();
+      if (isVisibleRef.current) {
+        fetchMarketStatus();
+        refreshOpenStocks();
+      }
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [fetchStocks]);
+  }, [fetchMarketStatus, refreshOpenStocks]);
 
+  // Initial load
   useEffect(() => {
+    fetchMarketStatus();
     fetchStocks();
-    intervalRef.current = setInterval(fetchStocks, REFRESH_INTERVAL);
+  }, [fetchMarketStatus, fetchStocks]);
+
+  // Periodic refresh - only for open exchanges
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      if (openExchanges.size > 0) {
+        refreshOpenStocks();
+      }
+    }, REFRESH_INTERVAL);
     return () => clearInterval(intervalRef.current);
-  }, [fetchStocks]);
+  }, [refreshOpenStocks, openExchanges]);
+
+  // Refresh market status every minute
+  useEffect(() => {
+    const marketInterval = setInterval(fetchMarketStatus, 60000);
+    return () => clearInterval(marketInterval);
+  }, [fetchMarketStatus]);
 
   // Search
   useEffect(() => {
@@ -135,7 +199,13 @@ export default function Trading({ user, onUpdate }) {
     try {
       const { data } = await api.getStock(sym);
       setStockData(data);
-      setChartHistory(data.history || []);
+      // If history is empty or not provided, fetch it for current period
+      if (!data.history || data.history.length === 0) {
+        const { data: historyData } = await api.getStockHistory(sym, '1mo');
+        setChartHistory(historyData || []);
+      } else {
+        setChartHistory(data.history || []);
+      }
     } catch (err) {
       alert(err.response?.data?.detail || 'Ошибка загрузки');
       setSelected(null);
@@ -215,7 +285,7 @@ export default function Trading({ user, onUpdate }) {
                   onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
                   onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                 >
-                  <span className="stock-symbol">{r.symbol}</span>
+                  <span className="stock-symbol">{r.displaySymbol || r.symbol}</span>
                   <span style={{ color: 'var(--text-dim)', marginLeft: '12px', fontSize: '14px' }}>{r.name}</span>
                   <span style={{ color: 'var(--text-dim)', marginLeft: '8px', fontSize: '12px' }}>({r.exchange})</span>
                 </div>
@@ -245,24 +315,28 @@ export default function Trading({ user, onUpdate }) {
         </div>
       ) : (
         <div className="stock-grid">
-          {stocks.map((stock) => (
-            <div key={stock.symbol} className="stock-card" onClick={() => openStock(stock.symbol)}>
-              <div className="stock-symbol">{stock.symbol}</div>
-              <div className="stock-name">{stock.name}</div>
-              {stock.price !== null ? (
-                <>
-                  <div className="stock-price">
-                    {symbol}<AnimatedPrice price={convert(stock.price)} prevPrice={convert(prevPrices[stock.symbol])} />
-                  </div>
-                  <div className={stock.change >= 0 ? 'change-positive' : 'change-negative'}>
-                    {stock.change >= 0 ? '+' : ''}{stock.change?.toFixed(2)}% сегодня
-                  </div>
-                </>
-              ) : (
-                <div style={{ marginTop: '12px' }}><Skeleton width="80px" height="24px" /></div>
-              )}
-            </div>
-          ))}
+          {stocks.map((stock) => {
+            const convertedPrice = convertFrom(stock.price, stock.currency);
+            const convertedPrevPrice = convertFrom(prevPrices[stock.symbol], stock.currency);
+            return (
+              <div key={stock.symbol} className="stock-card" onClick={() => openStock(stock.symbol)}>
+                <div className="stock-symbol">{stock.displaySymbol || stock.symbol}</div>
+                <div className="stock-name">{stock.name}</div>
+                {stock.price !== null ? (
+                  <>
+                    <div className="stock-price">
+                      {symbol}<AnimatedPrice price={convertedPrice} prevPrice={convertedPrevPrice} />
+                    </div>
+                    <div className={stock.change >= 0 ? 'change-positive' : 'change-negative'}>
+                      {stock.change >= 0 ? '+' : ''}{stock.change?.toFixed(2)}% сегодня
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ marginTop: '12px' }}><Skeleton width="80px" height="24px" /></div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -282,11 +356,16 @@ export default function Trading({ user, onUpdate }) {
               <>
                 <div className="flex" style={{ justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
                   <div>
-                    <div className="stock-symbol" style={{ fontSize: '1.5rem' }}>{stockData.symbol}</div>
+                    <div className="stock-symbol" style={{ fontSize: '1.5rem' }}>{stockData.displaySymbol || stockData.symbol}</div>
                     <div style={{ color: 'var(--text-dim)' }}>{stockData.name}</div>
+                    {stockData.exchange && (
+                      <div style={{ color: 'var(--text-dim)', fontSize: '11px', marginTop: '4px' }}>
+                        {stockData.exchange} • {stockData.currency || 'USD'}
+                      </div>
+                    )}
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div className="stock-price">{symbol}<AnimatedPrice price={convert(stockData.price)} /></div>
+                    <div className="stock-price">{symbol}{convertFrom(stockData.price, stockData.currency)?.toFixed(2)}</div>
                     <div className={stockData.change >= 0 ? 'change-positive' : 'change-negative'}>
                       {stockData.change >= 0 ? '+' : ''}{stockData.change?.toFixed(2)}% сегодня
                     </div>
@@ -310,15 +389,15 @@ export default function Trading({ user, onUpdate }) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px', fontSize: '12px' }}>
                   <div style={{ background: 'var(--bg-dark)', padding: '8px', borderRadius: '8px' }}>
                     <div style={{ color: 'var(--text-dim)' }}>Откр.</div>
-                    <div>{format(stockData.open)}</div>
+                    <div>{symbol}{convertFrom(stockData.open, stockData.currency)?.toFixed(2)}</div>
                   </div>
                   <div style={{ background: 'var(--bg-dark)', padding: '8px', borderRadius: '8px' }}>
                     <div style={{ color: 'var(--text-dim)' }}>Макс.</div>
-                    <div>{format(stockData.high)}</div>
+                    <div>{symbol}{convertFrom(stockData.high, stockData.currency)?.toFixed(2)}</div>
                   </div>
                   <div style={{ background: 'var(--bg-dark)', padding: '8px', borderRadius: '8px' }}>
                     <div style={{ color: 'var(--text-dim)' }}>Мин.</div>
-                    <div>{format(stockData.low)}</div>
+                    <div>{symbol}{convertFrom(stockData.low, stockData.currency)?.toFixed(2)}</div>
                   </div>
                   <div style={{ background: 'var(--bg-dark)', padding: '8px', borderRadius: '8px' }}>
                     <div style={{ color: 'var(--text-dim)' }}>Объём</div>
@@ -365,7 +444,7 @@ export default function Trading({ user, onUpdate }) {
 
                 {userPosition && (
                   <p style={{ color: 'var(--text-dim)', marginBottom: '16px' }}>
-                    У вас: {userPosition.quantity} шт. по {format(userPosition.avg_price)}
+                    У вас: {userPosition.quantity} шт. по {symbol}{convertFrom(userPosition.avg_price, stockData.currency)?.toFixed(2)}
                   </p>
                 )}
 
@@ -374,7 +453,7 @@ export default function Trading({ user, onUpdate }) {
                 </div>
 
                 <p style={{ color: 'var(--text-dim)', marginBottom: '16px' }}>
-                  Сумма: {format(stockData.price * parseFloat(quantity || 0))}
+                  Сумма: {symbol}{(convertFrom(stockData.price, stockData.currency) * parseFloat(quantity || 0))?.toFixed(2)}
                 </p>
 
                 <div className="flex gap-2">

@@ -15,6 +15,7 @@ export const api = {
   getQuote: (symbol) => API.get(`/quote/${symbol}`),
   searchStocks: (q) => API.get(`/search?q=${encodeURIComponent(q)}`),
   getCurrencies: () => API.get('/currencies'),
+  getMarkets: () => API.get('/markets'),
   trade: (data) => API.post(`/trade?token=${getToken()}`, data),
   getTransactions: () => API.get(`/transactions?token=${getToken()}`),
   getReport: () => API.get(`/report?token=${getToken()}`),

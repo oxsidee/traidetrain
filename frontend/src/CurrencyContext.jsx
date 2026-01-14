@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api } from './api';
 
 const CurrencyContext = createContext();
@@ -35,25 +35,68 @@ export function CurrencyProvider({ children }) {
   };
 
   // Convert USD to selected currency
-  const convert = (usdAmount) => {
+  const convert = useCallback((usdAmount) => {
     const rate = rates[currency] || 1;
     return usdAmount * rate;
-  };
+  }, [rates, currency]);
 
-  // Format with currency symbol
-  const format = (usdAmount, decimals = 2) => {
+  // Convert from any currency to selected currency
+  const convertFrom = useCallback((amount, fromCurrency) => {
+    if (!amount || !fromCurrency) return amount;
+    const from = fromCurrency.toUpperCase();
+    
+    // If same currency, no conversion needed
+    if (from === currency) return amount;
+    
+    // Convert to USD first, then to target
+    let usdAmount = amount;
+    if (from !== 'USD') {
+      const fromRate = rates[from] || 1;
+      usdAmount = amount / fromRate;
+    }
+    
+    // Convert from USD to target
+    const toRate = rates[currency] || 1;
+    return usdAmount * toRate;
+  }, [rates, currency]);
+
+  // Format with currency symbol (converts from USD)
+  const format = useCallback((usdAmount, decimals = 2) => {
     const converted = convert(usdAmount);
-    const symbol = CURRENCY_SYMBOLS[currency] || currency;
-    return `${symbol}${converted.toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
-  };
+    const sym = CURRENCY_SYMBOLS[currency] || currency;
+    return `${sym}${converted.toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  }, [convert, currency]);
+
+  // Format in native currency (no conversion, just formatting)
+  const formatNative = useCallback((amount, nativeCurrency, decimals = 2) => {
+    const sym = CURRENCY_SYMBOLS[nativeCurrency] || nativeCurrency || '$';
+    const val = amount || 0;
+    return `${sym}${val.toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  }, []);
+
+  // Format with conversion from native currency to selected
+  const formatConverted = useCallback((amount, fromCurrency, decimals = 2) => {
+    const converted = convertFrom(amount, fromCurrency);
+    const sym = CURRENCY_SYMBOLS[currency] || currency;
+    return `${sym}${converted.toLocaleString('ru-RU', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  }, [convertFrom, currency]);
+
+  // Get symbol for a currency
+  const getSymbol = useCallback((curr) => {
+    return CURRENCY_SYMBOLS[curr] || curr || '$';
+  }, []);
 
   return (
     <CurrencyContext.Provider value={{ 
       currency, 
       setCurrency: changeCurrency, 
       rates, 
-      convert, 
+      convert,
+      convertFrom,
       format,
+      formatNative,
+      formatConverted,
+      getSymbol,
       symbol: CURRENCY_SYMBOLS[currency],
       loading,
       currencies: Object.keys(CURRENCY_SYMBOLS),

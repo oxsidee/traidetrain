@@ -12,13 +12,14 @@ function Skeleton({ width = '100%', height = '20px' }) {
 }
 
 // Clickable symbol - just a styled span, no modal inside
-function SymbolLink({ symbol, onClick }) {
+function SymbolLink({ symbol, displaySymbol, onClick }) {
+  const display = displaySymbol || symbol?.replace('.ME', '') || symbol;
   return (
     <span 
       onClick={() => onClick(symbol)}
       style={{ cursor: 'pointer', color: 'var(--accent)', textDecoration: 'underline' }}
     >
-      {symbol}
+      {display}
     </span>
   );
 }
@@ -58,7 +59,7 @@ function HoldingRow({ holding, onSymbolClick, onPriceUpdate }) {
 
   return (
     <tr>
-      <td><SymbolLink symbol={holding.symbol} onClick={onSymbolClick} /></td>
+      <td><SymbolLink symbol={holding.symbol} displaySymbol={holding.displaySymbol} onClick={onSymbolClick} /></td>
       <td>{holding.quantity}</td>
       <td>{format(holding.avg_price)}</td>
       <td>{format(currentPrice)}</td>
@@ -260,7 +261,7 @@ export default function Reports({ user, onUpdate }) {
               {transactions.map((t, i) => (
                 <tr key={i}>
                   <td style={{ color: 'var(--text-dim)' }}>{new Date(t.date).toLocaleDateString('ru-RU')}</td>
-                  <td><SymbolLink symbol={t.symbol} onClick={openSymbol} /></td>
+                  <td><SymbolLink symbol={t.symbol} displaySymbol={t.displaySymbol} onClick={openSymbol} /></td>
                   <td className={t.action === 'buy' ? 'change-positive' : 'change-negative'}>
                     {t.action === 'buy' ? 'Покупка' : 'Продажа'}
                   </td>
