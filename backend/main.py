@@ -67,6 +67,11 @@ def yahoo_quote(symbol: str):
     open_price = meta.get("regularMarketOpen", prev_close)
     change_day = ((price - prev_close) / prev_close * 100) if prev_close else 0
     
+    # Market status and last update time
+    market_state = meta.get("marketState", "UNKNOWN")
+    market_time = meta.get("regularMarketTime", 0)
+    last_update = datetime.fromtimestamp(market_time).isoformat() if market_time else None
+    
     return {
         "symbol": symbol,
         "name": meta.get("shortName") or meta.get("longName") or symbol,
@@ -77,6 +82,8 @@ def yahoo_quote(symbol: str):
         "high": round(meta.get("regularMarketDayHigh", 0), 2),
         "low": round(meta.get("regularMarketDayLow", 0), 2),
         "volume": meta.get("regularMarketVolume", 0),
+        "market_state": market_state,
+        "last_update": last_update,
     }
 
 def yahoo_history(symbol: str):

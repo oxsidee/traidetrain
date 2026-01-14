@@ -290,6 +290,20 @@ export default function Trading({ user, onUpdate }) {
                     <div className={stockData.change >= 0 ? 'change-positive' : 'change-negative'}>
                       {stockData.change >= 0 ? '+' : ''}{stockData.change?.toFixed(2)}% сегодня
                     </div>
+                    {stockData.market_state && (
+                      <div style={{ 
+                        color: stockData.market_state === 'REGULAR' ? 'var(--green)' : 'var(--text-dim)', 
+                        fontSize: '11px',
+                        marginTop: '4px'
+                      }}>
+                        {stockData.market_state === 'REGULAR' ? '● Рынок открыт' : '○ Рынок закрыт'}
+                      </div>
+                    )}
+                    {stockData.last_update && (
+                      <div style={{ color: 'var(--text-dim)', fontSize: '10px', marginTop: '2px' }}>
+                        {new Date(stockData.last_update).toLocaleTimeString('ru-RU')}
+                      </div>
+                    )}
                   </div>
                 </div>
 

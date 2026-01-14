@@ -32,6 +32,20 @@ function CurrencySelector() {
 
 function Nav({ user, onLogout }) {
   const location = useLocation();
+  const [marketState, setMarketState] = useState(null);
+  
+  useEffect(() => {
+    const fetchMarketState = async () => {
+      try {
+        const { data } = await api.getQuote('AAPL');
+        setMarketState(data.market_state);
+      } catch {}
+    };
+    
+    fetchMarketState();
+    const interval = setInterval(fetchMarketState, 3000);
+    return () => clearInterval(interval);
+  }, []);
   
   return (
     <div className="container">
@@ -45,6 +59,18 @@ function Nav({ user, onLogout }) {
           </nav>
         </div>
         <div className="flex gap-4" style={{ alignItems: 'center' }}>
+          {marketState && (
+            <span style={{ 
+              color: marketState === 'REGULAR' ? 'var(--green)' : 'var(--text-dim)', 
+              padding: '12px 24px',
+              borderRadius: '10px',
+              fontWeight: 600,
+              fontSize: '14px',
+              display: 'inline-block'
+            }}>
+              {marketState === 'REGULAR' ? '● Рынок открыт' : '○ Рынок закрыт'}
+            </span>
+          )}
           <CurrencySelector />
           <span style={{ color: 'var(--text-dim)' }}>{user?.username}</span>
           <button className="btn btn-outline" onClick={onLogout}>Выйти</button>
